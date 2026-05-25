@@ -133,7 +133,7 @@ class Orders extends API_Controller
             'shipping_cost' => $shipping_cost,
             'admin_fee' => $tax_fee,
             'grand_total' => $grand_total,
-            'order_status' => 'pending',
+            'order_status' => 'paid',
             'account_number' => $p['accountNumber'], // VARCHAR
             'account_name' => $p['accountName'],
             'payment_status' => 'paid',

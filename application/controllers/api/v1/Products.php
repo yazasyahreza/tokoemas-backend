@@ -18,7 +18,6 @@ class Products extends API_Controller
 
         $filters = [
             'category_id' => $this->input->get('category_id'),
-            'brand_id' => $this->input->get('brand_id'),
             'search' => $this->input->get('search'),
             'min_price' => $this->input->get('min_price'),
             'max_price' => $this->input->get('max_price'),

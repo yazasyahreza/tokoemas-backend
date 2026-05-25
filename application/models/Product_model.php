@@ -11,17 +11,13 @@ class Product_model extends MY_Model {
     }
 
     public function get_list($filters = [], $limit = 10, $offset = 0) {
-        $this->db->select('products.*, categories.name as category_name, brands.name as brand_name');
+        $this->db->select('products.*, categories.name as category_name');
         $this->db->from($this->table);
         $this->db->join('categories', 'categories.id = products.category_id');
-        $this->db->join('brands', 'brands.id = products.brand_id', 'left');
         $this->db->where('products.status', 'active');
 
         if (!empty($filters['category_id'])) {
             $this->db->where('products.category_id', $filters['category_id']);
-        }
-        if (!empty($filters['brand_id'])) {
-            $this->db->where('products.brand_id', $filters['brand_id']);
         }
         if (!empty($filters['search'])) {
             $this->db->like('products.name', $filters['search']);
@@ -40,10 +36,9 @@ class Product_model extends MY_Model {
     }
 
     public function get_detail($slug) {
-        $product = $this->db->select('products.*, categories.name as category_name, brands.name as brand_name')
+        $product = $this->db->select('products.*, categories.name as category_name')
                             ->from($this->table)
                             ->join('categories', 'categories.id = products.category_id')
-                            ->join('brands', 'brands.id = products.brand_id', 'left')
                             ->where('products.slug', $slug)
                             ->get()
                             ->row();

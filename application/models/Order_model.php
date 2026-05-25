@@ -95,13 +95,14 @@
             // Tambahkan list_produk_detail dan courier_name
             $this->db->select('orders.*, 
                        GROUP_CONCAT(CONCAT(order_items.product_name, "(", order_items.quantity, "x)") SEPARATOR ", ") as list_produk_detail,
-                       shipping_methods.name as courier_name'); // Tambahkan ini
+                       shipping_methods.name as courier_name, shipments.shipping_status'); // Tambahkan ini
             $this->db->from($this->table);
             $this->db->join('order_items', 'order_items.order_id = orders.id', 'left');
             // Join ke tabel shipping_methods untuk ambil nama logistik
             $this->db->join('shipping_methods', 'orders.shipping_method_id = shipping_methods.id', 'left');
+            $this->db->join('shipments', 'shipments.order_id = orders.id', 'left');
             $this->db->where('orders.user_id', $user_id);
-            $this->db->group_by('orders.id');
+            $this->db->group_by(['orders.id', 'shipments.shipping_status']);
             $this->db->order_by('orders.created_at', 'DESC');
 
             return $this->db->get()->result();
@@ -124,7 +125,7 @@
         ");
             $this->db->from($this->table);
             $this->db->join('shipping_addresses', 'shipping_addresses.id = orders.shipping_address_id', 'left');
-            $this->db->join('shop_accounts', 'shop_accounts.id = orders.shop_accounts_id', 'left');
+            $this->db->join('shop_accounts', 'shop_accounts.id = orders.shop_account_id', 'left');
             $this->db->join('shipping_methods', 'shipping_methods.id = orders.shipping_method_id', 'left');
             $this->db->join('shipments', 'shipments.order_id = orders.id', 'left');
 
@@ -170,7 +171,7 @@
         ');
             $this->db->from('transactions');
             $this->db->join('orders', 'orders.id = transactions.order_id');
-            $this->db->join('shop_accounts', 'shop_accounts.id = orders.shop_accounts_id', 'left');
+            $this->db->join('shop_accounts', 'shop_accounts.id = orders.shop_account_id', 'left');
             $this->db->where('orders.user_id', $user_id);
             $this->db->order_by('transactions.transaction_date', 'DESC');
 

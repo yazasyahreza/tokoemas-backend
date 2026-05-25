@@ -88,6 +88,8 @@ $route['api/v1/orders/detail/(:num)'] = 'api/v1/orders/detail/$1';
 $route['api/v1/orders/upload-proof/(:num)'] = 'api/v1/orders/upload_payment_proof/$1';
 $route['api/v1/transactions'] = 'api/v1/orders/transactions';
 
+$route['api/v1/reviews/add'] = 'api/v1/reviews/add';
+
 $route['api/v1/shop-accounts'] = 'api/v1/shopaccounts/index';
 $route['api/v1/banners'] = 'api/v1/banners/index';
 $route['api/v1/shipping'] = 'api/v1/shipping/index';

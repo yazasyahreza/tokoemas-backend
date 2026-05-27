@@ -94,3 +94,6 @@ $route['api/v1/shop-accounts'] = 'api/v1/shopaccounts/index';
 $route['api/v1/banners'] = 'api/v1/banners/index';
 $route['api/v1/shipping'] = 'api/v1/shipping/index';
 $route['api/v1/payments'] = 'api/v1/payments/index';
+
+$route['api/v1/vouchers'] = 'api/v1/vouchers/index';
+$route['api/v1/vouchers/validate'] = 'api/v1/vouchers/validate';

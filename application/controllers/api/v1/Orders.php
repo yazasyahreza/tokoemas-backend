@@ -58,7 +58,7 @@ class Orders extends API_Controller
             return json_response(false, 'Metode pembayaran, kurir, atau bank tujuan belum dipilih.', null, 400);
         }
 
-        // 3. Kalkulasi Ulang Harga di Backend
+        // 3. Kalkulasi Ulang Harga Asli di Backend
         $subtotal = 0;
         $total_weight = 0;
 
@@ -73,9 +73,49 @@ class Orders extends API_Controller
         $tax_setting = $this->db->get_where('settings', ['key' => 'tax_percentage'])->row();
         $tax_fee = $tax_setting ? $tax_setting->value : 0;
 
-        $grand_total = $subtotal + $shipping_cost + $tax_fee;
+        // =================================================================
+        // 🔥 4. LOGIKA VALIDASI VOUCHER & DISKON (ANTI-FRAUD)
+        // =================================================================
+        $voucher_id = isset($p['voucher_id']) && $p['voucher_id'] !== '' ? $p['voucher_id'] : null;
+        $discount_amount = 0;
 
-        // 4. --- PROSES UPLOAD GAMBAR ---
+        if ($voucher_id) {
+            $voucher = $this->db->get_where('vouchers', ['id' => $voucher_id, 'is_active' => 1])->row();
+
+            if ($voucher) {
+                $now = date('Y-m-d H:i:s');
+
+                // Cek Masa Berlaku, Kuota, dan Minimal Belanja
+                if (
+                    $now >= $voucher->start_date && $now <= $voucher->end_date &&
+                    ($voucher->usage_limit === NULL || $voucher->used_count < $voucher->usage_limit) &&
+                    $subtotal >= $voucher->min_purchase
+                ) {
+
+                    // Hitung nominal potongan
+                    if ($voucher->discount_type === 'fixed') {
+                        $discount_amount = floatval($voucher->discount_value);
+                    } else if ($voucher->discount_type === 'percent') {
+                        $discount_amount = ($voucher->discount_value / 100) * $subtotal;
+                        if ($voucher->max_discount !== NULL && $discount_amount > $voucher->max_discount) {
+                            $discount_amount = floatval($voucher->max_discount);
+                        }
+                    }
+                } else {
+                    return json_response(false, 'Transaksi ditolak: Voucher sudah kedaluwarsa, kuota habis, atau syarat tidak terpenuhi.', null, 400);
+                }
+            } else {
+                return json_response(false, 'Transaksi ditolak: Voucher tidak terdaftar di sistem.', null, 404);
+            }
+        }
+
+        // Kalkulasi Akhir (Pastikan tidak minus)
+        $grand_total = $subtotal + $shipping_cost + $tax_fee - $discount_amount;
+        if ($grand_total < 0) $grand_total = 0;
+
+        // =================================================================
+        // 5. PROSES UPLOAD GAMBAR 
+        // =================================================================
         $this->load->library('upload');
 
         // A. Upload Bukti Pembayaran (Wajib)
@@ -95,7 +135,7 @@ class Orders extends API_Controller
             return json_response(false, 'File bukti pembayaran wajib diunggah!', null, 400);
         }
 
-        // B. Upload KTP (Bisa jadi user sudah pernah upload sebelumnya)
+        // B. Upload KTP 
         $ktp_name = null;
         if (!empty($_FILES['ktpBlobFile']['name'])) {
             $config_ktp['upload_path'] = FCPATH . 'uploads/documents/';
@@ -108,7 +148,9 @@ class Orders extends API_Controller
             }
         }
 
-        // 5. Susun Data Alamat (Untuk tabel shipping_addresses)
+        // =================================================================
+        // 6. SUSUN DATA UNTUK DATABASE
+        // =================================================================
         $address_data = [
             'user_id' => $user_id,
             'receiver_name' => trim($p['firstName'] . ' ' . $p['lastName']),
@@ -121,7 +163,6 @@ class Orders extends API_Controller
             'is_default' => 1
         ];
 
-        // 6. Susun Data Order Inti
         $order_data = [
             'invoice_no' => !empty($p['invoiceNumber']) ? $p['invoiceNumber'] : 'INV/' . date('Ymd') . '/' . strtoupper(bin2hex(random_bytes(3))),
             'user_id' => $user_id,
@@ -129,19 +170,23 @@ class Orders extends API_Controller
             'shipping_method_id' => $p['selectedCourier'],
             'payment_method_id' => $p['selectedBank'],
             'total_weight' => $total_weight,
+
+            // 🔥 REKAM JEJAK HARGA & VOUCHER
             'subtotal' => $subtotal,
             'shipping_cost' => $shipping_cost,
             'admin_fee' => $tax_fee,
-            'grand_total' => $grand_total,
-            'order_status' => 'paid',
-            'account_number' => $p['accountNumber'], // VARCHAR
+            'voucher_id' => $voucher_id,             // Menyimpan ID Voucher (bisa NULL)
+            'discount_amount' => $discount_amount,   // Menyimpan nominal potongan
+            'grand_total' => $grand_total,           // Total setelah didiskon
+
+            'order_status' => 'pending',
+            'account_number' => $p['accountNumber'],
             'account_name' => $p['accountName'],
-            'payment_status' => 'paid',
+            'payment_status' => 'unpaid',
             'payment_proof' => $payment_proof_name,
             'notes' => isset($p['note']) ? $p['note'] : ''
         ];
 
-        // 7. Data KTP
         $ktp_data = null;
         if ($ktp_name) {
             $ktp_data = [
@@ -152,18 +197,43 @@ class Orders extends API_Controller
             ];
         }
 
-        // 8. TEMBAK KE MODEL (Memulai Database Transaction)
+        // =================================================================
+        // 7. TEMBAK KE MODEL DENGAN TRANSACTION WRAPPER
+        // =================================================================
+        // Membuka payung pelindung. Jika ada error di tengah jalan, semua batal otomatis.
+        $this->db->trans_start();
+
         $insert_status = $this->Order_model->process_checkout($user_id, $address_data, $order_data, $cart_items, $ktp_data);
 
-        if ($insert_status) {
-            return json_response(true, 'Pesanan berhasil dibuat!', ['invoice_no' => $order_data['invoice_no']]);
-        } else {
+        // 🔥 JIKA ORDER SUKSES DIBUAT, POTONG KUOTA VOUCHER!
+        if ($insert_status && $voucher_id) {
+            $this->db->set('used_count', 'used_count + 1', FALSE); // Atomik anti bentrok
+            $this->db->where('id', $voucher_id);
+            $this->db->update('vouchers');
+        }
+
+        // Menutup payung pelindung dan meresmikan/commit seluruh kueri.
+        $this->db->trans_complete();
+
+        // =================================================================
+        // 8. FINALISASI RESPONSE
+        // =================================================================
+        if ($this->db->trans_status() === FALSE || !$insert_status) {
             // Jika transaksi gagal, hapus gambar yang telanjur terupload agar tidak jadi sampah
             @unlink(FCPATH . 'uploads/payment_proofs/' . $payment_proof_name);
             if ($ktp_name) @unlink(FCPATH . 'uploads/documents/' . $ktp_name);
 
             return json_response(false, 'Terjadi kegagalan sistem saat menyimpan pesanan ke database.', null, 500);
         }
+
+        return json_response(true, 'Pesanan berhasil dibuat!', [
+            'invoice_no'      => $order_data['invoice_no'],
+            'grand_total'     => $grand_total,
+            'discount_amount' => $discount_amount,
+            'subtotal'        => $subtotal,
+            'shipping_cost'   => $shipping_cost,
+            'admin_fee'       => $tax_fee
+        ]);
     }
 
     public function upload_payment_proof($id)

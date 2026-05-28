@@ -26,6 +26,8 @@ class Vouchers extends API_Controller
     $auth = $this->verify_token();
     if ($auth !== true) return $auth;
 
+    $user_id = $this->user_data->id;
+
     $input = $this->get_input();
     $code  = isset($input['code']) ? strtoupper(trim($input['code'])) : '';
     $cart_total = isset($input['cart_total']) ? floatval($input['cart_total']) : 0;
@@ -54,6 +56,16 @@ class Vouchers extends API_Controller
     // Cek Validasi Minimal Belanja
     if ($cart_total < $voucher->min_purchase) {
       return json_response(false, 'Total belanja Anda belum memenuhi syarat minimum untuk voucher ini bos.', null, 400);
+    }
+
+    $this->db->where('user_id', $user_id);
+    $this->db->where('voucher_id', $voucher->id);
+    // Jika ordernya 'cancelled' atau 'failed', anggap belum terpakai (Auto-Rollback)
+    $this->db->where_not_in('order_status', ['cancelled', 'failed']);
+    $has_used = $this->db->get('orders')->num_rows();
+
+    if ($has_used > 0) {
+      return json_response(false, 'Maaf, Anda sudah pernah menggunakan kode voucher ini pada pesanan sebelumnya.', null, 400);
     }
 
     // 🔥 HITUNG NOMINAL POTONGAN ASLI (ANTI-FRAUD LOGIC)

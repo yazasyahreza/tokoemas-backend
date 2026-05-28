@@ -85,11 +85,18 @@ class Orders extends API_Controller
             if ($voucher) {
                 $now = date('Y-m-d H:i:s');
 
-                // Cek Masa Berlaku, Kuota, dan Minimal Belanja
+                // Cek Riwayat Pemakaian User di Database (Mencegah Pemakaian Berulang)
+                $this->db->where('user_id', $user_id);
+                $this->db->where('voucher_id', $voucher_id);
+                $this->db->where_not_in('order_status', ['cancelled', 'failed']); // Berikan kesempatan jika dulu batal
+                $already_used = $this->db->get('orders')->num_rows() > 0;
+
+                // Syarat Berlapis: Waktu Aktif AND Kuota Global Tersedia AND Min Belanja Cukup AND User Belum Pernah Pakai
                 if (
                     $now >= $voucher->start_date && $now <= $voucher->end_date &&
                     ($voucher->usage_limit === NULL || $voucher->used_count < $voucher->usage_limit) &&
-                    $subtotal >= $voucher->min_purchase
+                    $subtotal >= $voucher->min_purchase &&
+                    !$already_used
                 ) {
 
                     // Hitung nominal potongan
@@ -102,7 +109,9 @@ class Orders extends API_Controller
                         }
                     }
                 } else {
-                    return json_response(false, 'Transaksi ditolak: Voucher sudah kedaluwarsa, kuota habis, atau syarat tidak terpenuhi.', null, 400);
+                    // Beri pesan detail kenapa ditolak saat detik-detik terakhir
+                    $pesan_error = $already_used ? 'Anda sudah pernah memakai voucher ini.' : 'Voucher kedaluwarsa, kuota habis, atau syarat tidak terpenuhi.';
+                    return json_response(false, 'Transaksi ditolak: ' . $pesan_error, null, 400);
                 }
             } else {
                 return json_response(false, 'Transaksi ditolak: Voucher tidak terdaftar di sistem.', null, 404);
@@ -273,5 +282,52 @@ class Orders extends API_Controller
         // Memanggil fungsi baru di Order_model
         $transactions = $this->Order_model->get_user_transactions($this->user_data->id);
         return json_response(true, 'Transactions retrieved', $transactions);
+    }
+
+    public function cancel_order($order_id)
+    {
+        $auth = $this->verify_token();
+        if ($auth !== true) return $auth;
+
+        $user_id = $this->user_data->id;
+
+        $this->db->trans_start();
+
+        // 1. Ambil data order milik user ini
+        $order = $this->db->get_where('orders', ['id' => $order_id, 'user_id' => $user_id])->row();
+
+        if (!$order) {
+            $this->db->trans_rollback();
+            return json_response(false, 'Pesanan tidak ditemukan atau bukan milik Anda.', null, 404);
+        }
+
+        // Jangan batalkan jika statusnya sudah cancelled atau sudah sukses
+        if ($order->order_status === 'cancelled' || $order->order_status === 'success') {
+            $this->db->trans_rollback();
+            return json_response(false, 'Pesanan ini tidak dapat dibatalkan (sudah batal/sukses).', null, 400);
+        }
+
+        // 2. Ubah status order menjadi cancelled
+        $this->db->where('id', $order_id);
+        $this->db->update('orders', ['order_status' => 'cancelled']);
+
+        // =================================================================
+        // 🔥 LOGIKA VOUCHER QUOTA ROLLBACK 
+        // =================================================================
+        // 3. Jika order ini menggunakan voucher, kembalikan kuotanya
+        if (!empty($order->voucher_id)) {
+            $this->db->where('id', $order->voucher_id);
+            $this->db->where('used_count >', 0); // Pengaman Anti-Minus
+            $this->db->set('used_count', 'used_count - 1', FALSE);
+            $this->db->update('vouchers');
+        }
+
+        $this->db->trans_complete();
+
+        if ($this->db->trans_status() === FALSE) {
+            return json_response(false, 'Terjadi kesalahan sistem saat membatalkan pesanan.', null, 500);
+        }
+
+        return json_response(true, 'Pesanan berhasil dibatalkan dan kuota voucher telah dikembalikan.');
     }
 }

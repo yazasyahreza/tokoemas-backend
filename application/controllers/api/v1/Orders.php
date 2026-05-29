@@ -212,6 +212,7 @@ class Orders extends API_Controller
         // Membuka payung pelindung. Jika ada error di tengah jalan, semua batal otomatis.
         $this->db->trans_start();
 
+        // 🔥 PERBAIKAN: Pastikan 5 variabel ini terkirim semua ke Model, termasuk $ktp_data!
         $insert_status = $this->Order_model->process_checkout($user_id, $address_data, $order_data, $cart_items, $ktp_data);
 
         // 🔥 JIKA ORDER SUKSES DIBUAT, POTONG KUOTA VOUCHER!

@@ -134,23 +134,15 @@ class Auth extends API_Controller
         $user_id = $this->user_data->id;
         $user = $this->User_model->get_profile($user_id);
 
-        // 🔥 UPGRADE: Ambil SEMUA dokumen milik user (KTP & NPWP)
-        $docs = $this->db->get_where('customer_documents', ['user_id' => $user_id])->result();
+        // 🔥 PERBAIKAN: Ambil HANYA 1 baris data KTP yang paling baru (Anti Error Data Ganda)
+        $ktp = $this->db->order_by('id', 'DESC')->get_where('customer_documents', ['user_id' => $user_id, 'type' => 'ktp'])->row();
+        $user->ktp_file = $ktp ? $ktp->file_path : null;
+        $user->ktp_status = $ktp ? $ktp->status : null;
 
-        $user->ktp_file = null;
-        $user->ktp_status = null;
-        $user->npwp_file = null;
-        $user->npwp_status = null;
-
-        foreach ($docs as $doc) {
-            if ($doc->type === 'ktp') {
-                $user->ktp_file = $doc->file_path;
-                $user->ktp_status = $doc->status;
-            } elseif ($doc->type === 'npwp') {
-                $user->npwp_file = $doc->file_path;
-                $user->npwp_status = $doc->status;
-            }
-        }
+        // 🔥 PERBAIKAN: Ambil HANYA 1 baris data NPWP yang paling baru
+        $npwp = $this->db->order_by('id', 'DESC')->get_where('customer_documents', ['user_id' => $user_id, 'type' => 'npwp'])->row();
+        $user->npwp_file = $npwp ? $npwp->file_path : null;
+        $user->npwp_status = $npwp ? $npwp->status : null;
 
         return json_response(true, 'Success', $user);
     }

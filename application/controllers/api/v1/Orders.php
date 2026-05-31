@@ -149,11 +149,23 @@ class Orders extends API_Controller
         if (!empty($_FILES['ktpBlobFile']['name'])) {
             $config_ktp['upload_path'] = FCPATH . 'uploads/documents/';
             $config_ktp['allowed_types'] = 'jpg|jpeg|png|webp';
-            $config_ktp['file_name'] = 'ktp_' . $user_id . '_' . time();
+            $config_ktp['file_name'] = 'ktp_' . $user_id . '_' . time(); // Nama file baru dengan timestamp
             $this->upload->initialize($config_ktp);
 
             if ($this->upload->do_upload('ktpBlobFile')) {
                 $ktp_name = $this->upload->data('file_name');
+
+                // 🔥 PERBAIKAN: Cari KTP lama di database dan hapus wujud fisiknya di folder
+                $existing_ktp = $this->db->get_where('customer_documents', ['user_id' => $user_id, 'type' => 'ktp'])->row();
+
+                if ($existing_ktp && !empty($existing_ktp->file_path)) {
+                    $old_file_path = FCPATH . 'uploads/documents/' . $existing_ktp->file_path;
+
+                    // Jika file lama benar-benar ada di dalam folder, musnahkan!
+                    if (file_exists($old_file_path)) {
+                        @unlink($old_file_path);
+                    }
+                }
             }
         }
 
